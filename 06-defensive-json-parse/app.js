@@ -28,24 +28,72 @@ export function makeResponse(body) {
 
 // The naive handler. No safe-parse wrapper, no shape check, no bounds check.
 export async function loadProfile(response) {
-  // response.json() calls JSON.parse for you — and throws a SyntaxError on a
-  // truncated or otherwise malformed body, with nothing here to catch it.
-  const data = await response.json();
+  let body;
+  try {
+    body = await response.text();
+  }
+  catch (e) {
+    return {ok: false, reason: "body-read-failed"};
+  }
 
-  // TODO: This is the fix point. Right now the handler trusts the parsed shape:
-  //   - it does not wrap the parse to convert a SyntaxError into a safe rejection
-  //   - it does not confirm `data.user` exists and is an object before reading it
-  //   - it does not check that `name` is a string or `roles` is a string[]
-  //   - it does not enforce bounds (name length, allowed roles)
-  // Replace the blind property access below with: safeParse -> shape validation
-  // (Object.hasOwn for keys, typeof / Array.isArray for types) -> bounds checks,
-  // returning { ok: true, profile } or { ok: false, reason } and never throwing.
-  const profile = {
-    name: data.user.name,                 // throws when there is no `user` key
-    roles: data.user.roles.map((r) => r), // throws when `roles` is not an array
-  };
+  if (typeof body !== "string") {
+    return {ok: false, reason: "body-not-string"};
+  }
+  if (body.trim().length === 0) {
+    return {ok: false, reason: "body-empty"};
+  }
 
-  // Even when this does not throw (e.g. wrong-types makes name === null and
-  // roles a bare string), it hands a corrupt profile back as if it were valid.
-  return { ok: true, profile };
+  let data;
+  try {
+    data = JSON.parse(body);
+  }
+  catch (e) {
+    return {ok: false, reason: "invalid-json"};
+  }
+
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return {ok: false, reason: "invalid-root"};
+  }
+  if (!Object.hasOwn(data, "user")) {
+    return {ok: false, reason: "missing-user"};
+  }
+
+  const user = data.user;
+  if (user === null || typeof user !== "object" || Array.isArray(user)) {
+    return {ok: false, reason: "invalid-user"};
+  }
+  if (!Object.hasOwn(user, "id")) {
+    return {ok: false, reason: "missing-id"};
+  }
+  if (!Object.hasOwn(user, "name")) {
+    return {ok: false, reason: "missing-name"};
+  }
+  if (!Object.hasOwn(user, "roles")) {
+    return {ok: false, reason: "missing-roles"};
+  }
+
+  const id = user.id;
+  const name = user.name;
+  const roles = user.roles;
+
+  if (typeof id !== "number") {
+    return {ok: false, reason: "invalid-id-type"};
+  }
+  if (typeof name !== "string") {
+    return {ok: false, reason: "invalid-name-type"};
+  }
+  if (!Array.isArray(roles) || !roles.every((role) => typeof role === "string")) {
+    return {ok: false, reason: "invalid-roles-type"};
+  }
+
+  if (name.length > 100) {
+    return {ok: false, reason: "name-too-long"};
+  }
+
+  const allowedRoles = new Set(["admin"]);
+  if (!roles.every((role) => allowedRoles.has(role))) {
+    return {ok: false, reason: "invalid-roles"};
+  }
+
+  return {ok: true, profile: {id, name, roles}};
 }
