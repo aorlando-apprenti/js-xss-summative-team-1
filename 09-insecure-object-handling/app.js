@@ -26,7 +26,7 @@ export function makeUser() {
 const settings = { dark: "#111", light: "#fff" };
 
 export function applyProfile(user, parsed) {
-  // TODO: This is the defense point. The three lines below are all unsafe:
+  // DONE: This is the defense point. The three lines below are all unsafe:
   //
   //   1. Object.assign bulk-copies every key from the untrusted `parsed` onto
   //      `user`, so a payload carrying isAdmin:true sets it. Replace this with an
@@ -41,9 +41,22 @@ export function applyProfile(user, parsed) {
   //
   //   3. `parsed.tier == 1` is loose equality. Use a type check plus strict
   //      equality: typeof parsed.tier === "number" && parsed.tier === 1.
-  Object.assign(user, parsed);                   // (a) mass assignment
-  const chosen = settings[parsed.preferredKey];  // (b) unsafe dynamic read
-  const isTierOne = parsed.tier == 1;            // (c) loose-equality gate
+  const allowedKeys = ["displayName", "theme", "tier"];
+  for (const key of allowedKeys) {
+    if (Object.hasOwn(parsed, key)) {
+      user[key] = parsed[key];
+    }
+  }
+
+  const chosen = Object.hasOwn(settings, parsed.preferredKey)
+    ? settings[parsed.preferredKey]
+    : undefined;
+
+  const isTierOne = typeof parsed.tier === "number" && parsed.tier === 1;
 
   return { user, chosen, isTierOne };
+
+
+  
+ 
 }
