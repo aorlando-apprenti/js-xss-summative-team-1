@@ -16,9 +16,12 @@
 
 // Echo the search term into the results banner.
 function renderSearch(term, el) {
-  // SOURCE: location.search ?q=  (see app.js).  SINK: innerHTML.
-  // The untrusted term is concatenated into markup and parsed as HTML.
-  el.innerHTML = "Showing results for: <strong>" + term + "</strong>";
+  el.replaceChildren();
+
+  const label = document.createTextNode("Showing results for: ");
+  const strong = document.createElement("strong");
+  strong.textContent = term;
+  el.append(label, strong);
 }
 
 // Render one member card and append it to the list container.
@@ -31,23 +34,45 @@ function renderMember(member, listEl) {
   h.textContent = member.name; // (this one is already safe — note it in your audit)
   card.appendChild(h);
 
-  // Bio: rendered as HTML so light formatting shows. SINK: insertAdjacentHTML.
-  // The stored bio is attacker-controllable (a saved profile field), so this is
-  // a markup sink fed by persisted untrusted data.
-  card.insertAdjacentHTML("beforeend", "<p>" + member.bio + "</p>");
+  // Bios support only light formatting; sanitize before using the markup sink.
+  const bio = document.createElement("p");
+  if (typeof member.bio === "string") {
+    if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
+      bio.innerHTML = window.DOMPurify.sanitize(member.bio, {
+        ALLOWED_TAGS: ["em", "strong"],
+        ALLOWED_ATTR: [],
+      });
+    } else {
+      bio.textContent = member.bio;
+    }
+  }
+  card.appendChild(bio);
 
-  // Profile link. SINK: href set from untrusted data with no scheme check, so a
-  // "javascript:" value becomes executable when clicked.
-  const link = document.createElement("a");
-  link.href = member.website;
-  link.textContent = "Profile";
-  card.appendChild(link);
+  // Only absolute or relative URLs that resolve to HTTP(S) are navigable.
+  if (typeof member.website === "string") {
+    let profileUrl;
+    try {
+      const parsedUrl = new URL(member.website, document.baseURI);
+      if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+        profileUrl = parsedUrl.href;
+      }
+    } catch (error) {
+      console.warn("Skipping invalid member profile URL.", error);
+    }
 
-  // "Say hi" button. SINK: an inline onclick string built from the member name,
-  // so a name containing a quote-and-paren breakout injects code.
+    if (profileUrl) {
+      const link = document.createElement("a");
+      link.href = profileUrl;
+      link.textContent = "Profile";
+      card.appendChild(link);
+    }
+  }
+
   const btn = document.createElement("button");
-  btn.setAttribute("onclick", "alert('hi ' + '" + member.name + "')");
   btn.textContent = "Say hi";
+  btn.addEventListener("click", () => {
+    alert("hi " + member.name);
+  });
   card.appendChild(btn);
 
   listEl.appendChild(card);

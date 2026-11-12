@@ -14,39 +14,95 @@
 // App defaults that the fetched settings are merged on top of.
 const DEFAULT_SETTINGS = { theme: "light", pageSize: 10 };
 
-// Read a fetched config blob and hand back its fields.
+function isPlainObject(value) {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function parseJsonObject(text, sourceName) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    console.error("Invalid JSON in " + sourceName + ".", error);
+    return null;
+  }
+
+  if (!isPlainObject(parsed)) {
+    console.error(sourceName + " must be a JSON object.");
+    return null;
+  }
+  return parsed;
+}
+
+function hasUnsafeKeys(value) {
+  if (value === null || typeof value !== "object") return false;
+
+  for (const key of Object.keys(value)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      return true;
+    }
+    if (hasUnsafeKeys(value[key])) return true;
+  }
+  return false;
+}
+
+// Read a fetched config blob and hand back validated fields or reject it.
 function parseConfig(text) {
-  // A bare JSON.parse: no try/catch (a malformed body throws straight through
-  // the caller), and the result is read with no shape or type checks at all.
-  const cfg = JSON.parse(text);
+  const cfg = parseJsonObject(text, "Config");
+  if (!cfg) return null;
+
+  if (typeof cfg.title !== "string" ||
+      !Number.isInteger(cfg.maxItems) ||
+      cfg.maxItems < 1) {
+    console.error("Config must include a string title and a positive integer maxItems.");
+    return null;
+  }
+
   return {
-    title: cfg.title,        // assumed to be a string; never verified
-    maxItems: cfg.maxItems,  // assumed to be a number; never verified
+    title: cfg.title,
+    maxItems: cfg.maxItems,
   };
 }
 
-// Recursively deep-merge `source` onto `target` (so nested settings objects are
-// combined rather than replaced). This is a classic prototype-pollution vector:
-// when a key is "__proto__", `target[key]` reaches Object.prototype, and the
-// nested merge writes onto it.
 function deepMerge(target, source) {
-  for (const key in source) {
-    if (typeof source[key] === "object" && source[key] !== null) {
-      if (!target[key]) target[key] = {};
-      deepMerge(target[key], source[key]); // key === "__proto__" -> pollutes
+  for (const key of Object.keys(source)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new TypeError("Refusing to merge an unsafe object key.");
+    }
+
+    const value = source[key];
+    if (isPlainObject(value)) {
+      if (!isPlainObject(target[key])) target[key] = {};
+      deepMerge(target[key], value);
     } else {
-      target[key] = source[key];
+      target[key] = value;
     }
   }
   return target;
 }
 
-// Merge a fetched settings blob on top of the app defaults.
+// Merge validated fetched settings on top of the app defaults.
 function applySettings(text) {
-  const parsed = JSON.parse(text);
-  // A deep merge of an untrusted object into trusted state with no __proto__
-  // guard. If `parsed` carries a "__proto__" key, deepMerge writes onto
-  // Object.prototype and every object on the page inherits it.
+  const parsed = parseJsonObject(text, "Settings");
+  if (!parsed) return null;
+
+  if (hasUnsafeKeys(parsed)) {
+    console.error("Settings contain a forbidden object key.");
+    return null;
+  }
+
+  const allowedKeys = ["theme", "pageSize"];
+  if (Object.keys(parsed).some((key) => !allowedKeys.includes(key)) ||
+      (Object.prototype.hasOwnProperty.call(parsed, "theme") &&
+        typeof parsed.theme !== "string") ||
+      (Object.prototype.hasOwnProperty.call(parsed, "pageSize") &&
+        (!Number.isInteger(parsed.pageSize) || parsed.pageSize < 1))) {
+    console.error("Settings contain unsupported fields or invalid values.");
+    return null;
+  }
+
   const settings = deepMerge({ ...DEFAULT_SETTINGS }, parsed);
   return settings;
 }
